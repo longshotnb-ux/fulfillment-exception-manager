@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Triage and resolve late-delivery exceptions.">
+    <title>Fulfillment Exception Manager</title>
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <header class="app-header">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true">FE</div>
+        <div>
+          <p class="eyebrow">Operations workspace</p>
+          <h1>Fulfillment Exception Manager</h1>
+        </div>
+      </div>
+      <div class="header-actions">
+        <span class="demo-badge"><span class="pulse-dot"></span>Synthetic demo data</span>
+        <label class="button button-primary" for="csv-file">Import CSV</label>
+        <input id="csv-file" type="file" accept=".csv,text/csv" hidden>
+      </div>
+    </header>
+
+    <main>
+      <section class="intro" aria-labelledby="queue-title">
+        <div>
+          <p class="eyebrow">Late-order triage</p>
+          <h2 id="queue-title">Exception queue</h2>
+          <p class="intro-copy">Prioritize delayed orders, capture investigation notes, and track resolution in one place.</p>
+        </div>
+        <p class="last-sync" id="last-sync">Loading current data…</p>
+      </section>
+
+      <section class="metric-grid" aria-label="Fulfillment summary">
+        <article class="metric-card metric-attention">
+          <div class="metric-heading"><span class="metric-icon" aria-hidden="true">!</span><span>Active exceptions</span></div>
+          <strong id="active-exceptions">—</strong>
+          <p id="active-context">Unresolved late orders</p>
+        </article>
+        <article class="metric-card">
+          <div class="metric-heading"><span class="metric-icon" aria-hidden="true">$</span><span>Revenue at risk</span></div>
+          <strong id="revenue-risk">—</strong>
+          <p>Value tied to unresolved delays</p>
+        </article>
+        <article class="metric-card">
+          <div class="metric-heading"><span class="metric-icon" aria-hidden="true">%</span><span>Late-order rate</span></div>
+          <strong id="late-rate">—</strong>
+          <p id="late-rate-context">Across all orders</p>
+        </article>
+        <article class="metric-card">
+          <div class="metric-heading"><span class="metric-icon" aria-hidden="true">↗</span><span>Average delay</span></div>
+          <strong id="average-delay">—</strong>
+          <p>Days beyond promise</p>
+        </article>
+      </section>
+
+      <section class="queue-panel" aria-label="Late-order exceptions">
+        <div class="queue-toolbar">
+          <div class="status-tabs" role="group" aria-label="Filter by workflow status">
+            <button class="status-tab active" type="button" data-status="">All <span id="count-all">0</span></button>
+            <button class="status-tab" type="button" data-status="Open">Open <span id="count-open">0</span></button>
+            <button class="status-tab" type="button" data-status="Investigating">Investigating <span id="count-investigating">0</span></button>
+            <button class="status-tab" type="button" data-status="Resolved">Resolved <span id="count-resolved">0</span></button>
+          </div>
+          <div class="filters">
+            <label class="sr-only" for="search">Search exceptions</label>
+            <div class="search-wrap">
+              <span aria-hidden="true">⌕</span>
+              <input id="search" type="search" placeholder="Order, center, category">
+            </div>
+            <label class="sr-only" for="region-filter">Filter by region</label>
+            <select id="region-filter">
+              <option value="">All regions</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Order</th>
+                <th scope="col">Route</th>
+                <th scope="col">Delay</th>
+                <th scope="col">Order value</th>
+                <th scope="col">Signals</th>
+                <th scope="col">Workflow</th>
+                <th scope="col"><span class="sr-only">Manage</span></th>
+              </tr>
+            </thead>
+            <tbody id="exception-rows">
+              <tr><td class="loading-cell" colspan="7">Loading exceptions…</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="empty-state" id="empty-state" hidden>
+          <span aria-hidden="true">✓</span>
+          <h3>No exceptions match these filters</h3>
+          <p>Try another status, region, or search term.</p>
+        </div>
+        <footer class="queue-footer"><span id="result-count">—</span><span>Showing up to 500 records</span></footer>
+      </section>
+    </main>
+
+    <dialog id="manage-dialog" aria-labelledby="dialog-title">
+      <form id="exception-form">
+        <div class="dialog-header">
+          <div>
+            <p class="eyebrow">Manage exception</p>
+            <h2 id="dialog-title">Order <span id="dialog-order-id"></span></h2>
+          </div>
+          <button class="icon-button" id="close-dialog" type="button" aria-label="Close">×</button>
+        </div>
+        <div class="order-context" id="order-context"></div>
+        <label for="dialog-status">Workflow status</label>
+        <select id="dialog-status" required>
+          <option value="Open">Open</option>
+          <option value="Investigating">Investigating</option>
+          <option value="Resolved">Resolved</option>
+        </select>
+        <label for="dialog-notes">Investigation notes</label>
+        <textarea id="dialog-notes" maxlength="500" rows="5" placeholder="Document the issue, action taken, or next step."></textarea>
+        <div class="character-count"><span id="note-count">0</span>/500</div>
+        <div class="dialog-actions">
+          <button class="button button-secondary" id="cancel-dialog" type="button">Cancel</button>
+          <button class="button button-primary" id="save-exception" type="submit">Save changes</button>
+        </div>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
