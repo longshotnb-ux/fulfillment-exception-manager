@@ -1,0 +1,8 @@
+{
+  "name": "fulfillment-exception-manager-browser-tests",
+  "private": true,
+  "type": "module",
+  "scripts": { "test:browser": "playwright test" },
+  "devDependencies": { "@playwright/test": "1.62.1" },
+  "packageManager": "pnpm@11.19.0"
+}

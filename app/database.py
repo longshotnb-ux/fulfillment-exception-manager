@@ -26,6 +26,9 @@ ORDER_COLUMNS = (
 )
 
 MAX_IMPORT_ROWS = 5_000
+MAX_SQLITE_INTEGER = 2**63 - 1
+# Order IDs travel through JSON and JavaScript Number without string conversion.
+MAX_ORDER_ID = 2**53 - 1
 
 
 class CSVValidationError(ValueError):
@@ -70,6 +73,24 @@ def initialize_database(database_path: Path | str) -> None:
             ON orders (exception_status, region, actual_days, promised_days)
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS exception_history (
+                id INTEGER PRIMARY KEY,
+                order_id INTEGER NOT NULL REFERENCES orders(order_id),
+                previous_status TEXT NOT NULL,
+                status TEXT NOT NULL,
+                previous_notes TEXT NOT NULL,
+                notes TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT
+                    (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+            )
+            """
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_history_order "
+            "ON exception_history (order_id, id DESC)"
+        )
 
 
 def database_is_empty(database_path: Path | str) -> bool:
@@ -84,7 +105,10 @@ def import_csv_file(database_path: Path | str, csv_path: Path | str) -> dict[str
 
 
 def import_csv_text(database_path: Path | str, csv_text: str) -> dict[str, int]:
-    rows = _parse_csv(csv_text)
+    try:
+        rows = _parse_csv(csv_text)
+    except csv.Error as error:
+        raise CSVValidationError(f"Invalid CSV: {error}") from error
     order_ids = [row[0] for row in rows]
 
     with connect(database_path) as connection:
@@ -121,6 +145,9 @@ def import_csv_text(database_path: Path | str, csv_text: str) -> dict[str, int]:
             """,
             rows,
         )
+        total_revenue = connection.execute("SELECT SUM(revenue) FROM orders").fetchone()[0]
+        if not math.isfinite(total_revenue):
+            raise CSVValidationError("Combined order revenue exceeds the supported numeric range.")
 
     return {
         "imported_rows": len(rows),
@@ -187,9 +214,18 @@ def _validate_row(raw_row: dict[str, str | None], line_number: int) -> tuple[Any
             raise CSVValidationError(
                 f"Row {line_number}: {column} must be at least {minimum}."
             )
+        if value > MAX_SQLITE_INTEGER:
+            raise CSVValidationError(
+                f"Row {line_number}: {column} must be at most {MAX_SQLITE_INTEGER}."
+            )
         return value
 
     order_id = whole_number("order_id", minimum=1)
+    if order_id > MAX_ORDER_ID:
+        raise CSVValidationError(
+            f"Row {line_number}: order_id must be at most {MAX_ORDER_ID} "
+            "so it can be represented exactly in the browser."
+        )
     order_date = required_text("order_date")
     try:
         date.fromisoformat(order_date)

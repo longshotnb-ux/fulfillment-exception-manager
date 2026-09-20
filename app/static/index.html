@@ -20,7 +20,7 @@
       </div>
       <div class="header-actions">
         <span class="demo-badge"><span class="pulse-dot"></span>Synthetic demo data</span>
-        <label class="button button-primary" for="csv-file">Import CSV</label>
+        <button class="button button-primary" id="import-button" type="button">Import CSV</button>
         <input id="csv-file" type="file" accept=".csv,text/csv" hidden>
       </div>
     </header>
@@ -103,7 +103,14 @@
           <h3>No exceptions match these filters</h3>
           <p>Try another status, region, or search term.</p>
         </div>
-        <footer class="queue-footer"><span id="result-count">—</span><span>Showing up to 500 records</span></footer>
+        <footer class="queue-footer">
+          <span id="result-count" aria-live="polite">—</span>
+          <nav class="pagination" aria-label="Exception pages">
+            <button class="button button-secondary" id="previous-page" type="button" disabled>Previous</button>
+            <span id="page-count">Page 1</span>
+            <button class="button button-secondary" id="next-page" type="button" disabled>Next</button>
+          </nav>
+        </footer>
       </section>
     </main>
 
@@ -126,6 +133,12 @@
         <label for="dialog-notes">Investigation notes</label>
         <textarea id="dialog-notes" maxlength="500" rows="5" placeholder="Document the issue, action taken, or next step."></textarea>
         <div class="character-count"><span id="note-count">0</span>/500</div>
+        <section class="history" aria-labelledby="history-title">
+          <h3 id="history-title">Change history</h3>
+          <p id="history-status" aria-live="polite"></p>
+          <ol id="history-list"></ol>
+          <button class="button button-secondary" id="more-history" type="button" hidden>Load earlier changes</button>
+        </section>
         <div class="dialog-actions">
           <button class="button button-secondary" id="cancel-dialog" type="button">Cancel</button>
           <button class="button button-primary" id="save-exception" type="submit">Save changes</button>

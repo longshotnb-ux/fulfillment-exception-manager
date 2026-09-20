@@ -5,15 +5,18 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Path as APIPath
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .database import (
     CSVValidationError,
+    MAX_SQLITE_INTEGER,
+    MAX_ORDER_ID,
     connect,
     database_is_empty,
     import_csv_file,
@@ -28,6 +31,7 @@ DEFAULT_DATABASE = ROOT / "data" / "exceptions.db"
 DEFAULT_SEED_CSV = ROOT / "data" / "orders.csv"
 ALLOWED_STATUSES = ("Open", "Investigating", "Resolved")
 MAX_CSV_BYTES = 1_000_000
+OrderId = Annotated[int, APIPath(ge=1, le=MAX_ORDER_ID)]
 
 
 class ExceptionUpdate(BaseModel):
@@ -167,6 +171,8 @@ def create_app(
         status: Optional[str] = Query(default=None),
         region: Optional[str] = Query(default=None, max_length=80),
         q: Optional[str] = Query(default=None, max_length=80),
+        limit: int = Query(default=50, ge=1, le=500),
+        offset: int = Query(default=0, ge=0, le=MAX_SQLITE_INTEGER),
     ) -> dict:
         if status and status not in ALLOWED_STATUSES:
             raise HTTPException(status_code=422, detail="Unknown workflow status.")
@@ -189,6 +195,9 @@ def create_app(
 
         where_clause = " AND ".join(conditions)
         with connect(application.state.database_path) as connection:
+            total = connection.execute(
+                f"SELECT COUNT(*) FROM orders WHERE {where_clause}", parameters
+            ).fetchone()[0]
             rows = connection.execute(
                 f"""
                 SELECT
@@ -208,24 +217,55 @@ def create_app(
                     delay_days DESC,
                     order_date DESC,
                     order_id DESC
-                LIMIT 500
+                LIMIT ? OFFSET ?
                 """,
-                parameters,
+                [*parameters, limit, offset],
             ).fetchall()
 
-        return {"items": [dict(row) for row in rows], "total": len(rows)}
+        return {
+            "items": [dict(row) for row in rows],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    @application.get("/api/exceptions/{order_id}/history")
+    def exception_history(
+        order_id: OrderId,
+        limit: int = Query(default=50, ge=1, le=100),
+        offset: int = Query(default=0, ge=0, le=MAX_SQLITE_INTEGER),
+    ) -> dict:
+        with connect(application.state.database_path) as connection:
+            if not connection.execute(
+                "SELECT 1 FROM orders WHERE order_id = ?", (order_id,)
+            ).fetchone():
+                raise HTTPException(status_code=404, detail="Order not found.")
+            total = connection.execute(
+                "SELECT COUNT(*) FROM exception_history WHERE order_id = ?",
+                (order_id,),
+            ).fetchone()[0]
+            rows = connection.execute(
+                "SELECT id, previous_status, status, previous_notes, notes, created_at "
+                "FROM exception_history WHERE order_id = ? "
+                "ORDER BY id DESC LIMIT ? OFFSET ?",
+                (order_id, limit, offset),
+            ).fetchall()
+        return {"items": [dict(row) for row in rows], "total": total}
 
     @application.patch("/api/exceptions/{order_id}")
-    def update_exception(order_id: int, payload: ExceptionUpdate) -> dict:
+    def update_exception(order_id: OrderId, payload: ExceptionUpdate) -> dict:
         if payload.status is None and payload.notes is None:
             raise HTTPException(
                 status_code=422, detail="Provide a status, notes, or both."
             )
 
         with connect(application.state.database_path) as connection:
+            # Read and write the before/after history under the same writer lock.
+            connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
                 """
-                SELECT order_id, actual_days, promised_days
+                SELECT order_id, actual_days, promised_days,
+                       exception_status, exception_notes
                 FROM orders WHERE order_id = ?
                 """,
                 (order_id,),
@@ -236,19 +276,20 @@ def create_app(
                     detail="Late-delivery exception not found.",
                 )
 
-            fields: list[str] = []
-            values: list[object] = []
-            if payload.status is not None:
-                fields.append("exception_status = ?")
-                values.append(payload.status)
-            if payload.notes is not None:
-                fields.append("exception_notes = ?")
-                values.append(payload.notes.strip())
-            fields.append("updated_at = CURRENT_TIMESTAMP")
-            values.append(order_id)
-            connection.execute(
-                f"UPDATE orders SET {', '.join(fields)} WHERE order_id = ?", values
-            )
+            status = payload.status or existing["exception_status"]
+            notes = payload.notes.strip() if payload.notes is not None else existing["exception_notes"]
+            if (status, notes) != (existing["exception_status"], existing["exception_notes"]):
+                connection.execute(
+                    "UPDATE orders SET exception_status = ?, exception_notes = ?, "
+                    "updated_at = CURRENT_TIMESTAMP WHERE order_id = ?",
+                    (status, notes, order_id),
+                )
+                connection.execute(
+                    "INSERT INTO exception_history "
+                    "(order_id, previous_status, status, previous_notes, notes) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (order_id, existing["exception_status"], status, existing["exception_notes"], notes),
+                )
             updated = connection.execute(
                 """
                 SELECT order_id, exception_status AS status,
@@ -272,9 +313,11 @@ def create_app(
                 ) from error
             if declared_length > MAX_CSV_BYTES:
                 raise HTTPException(status_code=413, detail="CSV file is too large.")
-        body = await request.body()
-        if len(body) > MAX_CSV_BYTES:
-            raise HTTPException(status_code=413, detail="CSV file is too large.")
+        body = bytearray()
+        async for chunk in request.stream():
+            if len(body) + len(chunk) > MAX_CSV_BYTES:
+                raise HTTPException(status_code=413, detail="CSV file is too large.")
+            body.extend(chunk)
         try:
             csv_text = body.decode("utf-8-sig")
         except UnicodeDecodeError as error:
