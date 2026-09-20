@@ -146,7 +146,9 @@ def import_csv_text(database_path: Path | str, csv_text: str) -> dict[str, int]:
             rows,
         )
         total_revenue = connection.execute("SELECT SUM(revenue) FROM orders").fetchone()[0]
-        if not math.isfinite(total_revenue):
+        # Some SQLite versions return NULL when a floating-point sum overflows.
+        # Parsed imports always contain rows, so NULL cannot mean an empty table.
+        if total_revenue is None or not math.isfinite(total_revenue):
             raise CSVValidationError("Combined order revenue exceeds the supported numeric range.")
 
     return {
